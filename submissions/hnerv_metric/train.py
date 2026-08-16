@@ -20,7 +20,7 @@ import torch.nn.functional as F
 from . import frames as frames_mod
 from . import judges
 from .config import CACHE_DIR, NUM_PAIRS, POSE_DIMS
-from .model import HNeRV
+from .model import HNeRV, scaled_widths
 
 
 def parse_args():
@@ -33,6 +33,8 @@ def parse_args():
     ap.add_argument("--w-pose", type=float, default=1.0, help="multiplier on the score-matched pose weight")
     ap.add_argument("--w-pix", type=float, default=2e-4)
     ap.add_argument("--amp", action="store_true")
+    ap.add_argument("--embed-c", type=int, default=4)
+    ap.add_argument("--width-mult", type=float, default=1.0)
     ap.add_argument("--eval-every", type=int, default=2000)
     ap.add_argument("--eval-pairs", type=int, default=64)
     ap.add_argument("--out", type=Path, default=CACHE_DIR / "hnerv.pt")
@@ -59,6 +61,7 @@ def measure(model, net, small, seg_t, pose_t, device, num_pairs, seed=0):
     rng = np.random.default_rng(seed)
     ids = np.sort(rng.choice(NUM_PAIRS, size=min(num_pairs, NUM_PAIRS), replace=False))
     seg_total, pose_total = 0.0, 0.0
+    per_dim = torch.zeros(POSE_DIMS, device=device)
 
     for start in range(0, len(ids), 4):
         chunk = ids[start : start + 4]
@@ -69,13 +72,13 @@ def measure(model, net, small, seg_t, pose_t, device, num_pairs, seed=0):
         seg_ref = torch.from_numpy(np.asarray(seg_t[chunk])).to(device).float()
         pose_ref = torch.from_numpy(np.asarray(pose_t[chunk])).to(device).float()
         seg_total += (seg_out.argmax(1) != seg_ref.argmax(1)).float().mean((1, 2)).sum().item()
-        pose_total += (
-            (pose_out["pose"][..., :POSE_DIMS] - pose_ref).pow(2).mean(1).sum().item()
-        )
+        err = (pose_out["pose"][..., :POSE_DIMS] - pose_ref).pow(2)
+        pose_total += err.mean(1).sum().item()
+        per_dim += err.sum(0)
 
     model.train()
     n = len(ids)
-    return seg_total / n, pose_total / n
+    return seg_total / n, pose_total / n, (per_dim / n).tolist()
 
 
 def main():
@@ -86,7 +89,9 @@ def main():
     seg_t, pose_t = judges.load_targets()
     net = judges.load_distortion_net(device)
 
-    model = HNeRV().to(device)
+    model = HNeRV(
+        widths=scaled_widths(args.width_mult), embed_c=args.embed_c
+    ).to(device)
     if args.resume and args.resume.exists():
         model.load_state_dict(torch.load(args.resume, map_location=device))
     model.train()
@@ -140,14 +145,18 @@ def main():
             )
 
         if step % args.eval_every == 0 or step == args.steps:
-            seg_d, pose_d = measure(model, net, small, seg_t, pose_t, device, args.eval_pairs)
+            seg_d, pose_d, dims = measure(
+                model, net, small, seg_t, pose_t, device, args.eval_pairs
+            )
             partial = 100 * seg_d + math.sqrt(10 * pose_d)
             w_pose = args.w_pose * pose_weight(pose_d)
+            spread = " ".join(f"{v:.4g}" for v in dims)
             print(
                 f"[eval {step}] seg {seg_d:.6f} pose {pose_d:.6f} "
                 f"distortion terms {partial:.4f}",
                 flush=True,
             )
+            print(f"[eval {step}] pose per dim: {spread}", flush=True)
             if partial < best:
                 best = partial
                 args.out.parent.mkdir(parents=True, exist_ok=True)

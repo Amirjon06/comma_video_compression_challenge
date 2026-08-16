@@ -16,6 +16,10 @@ EMBED_C, EMBED_H, EMBED_W = 4, 3, 4
 DEFAULT_WIDTHS = (96, 96, 80, 64, 48, 32, 24)
 
 
+def scaled_widths(mult: float, base=DEFAULT_WIDTHS) -> tuple[int, ...]:
+    return tuple(max(8, int(round(w * mult))) for w in base)
+
+
 class UpBlock(nn.Module):
     """Depthwise 3x3, pointwise expand to 4x channels, then pixel shuffle 2x."""
 
@@ -31,9 +35,9 @@ class UpBlock(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, widths=DEFAULT_WIDTHS):
+    def __init__(self, widths=DEFAULT_WIDTHS, embed_c: int = EMBED_C):
         super().__init__()
-        self.stem = nn.Conv2d(EMBED_C, widths[0], 1)
+        self.stem = nn.Conv2d(embed_c, widths[0], 1)
         blocks = []
         for i in range(len(widths) - 1):
             blocks.append(UpBlock(widths[i], widths[i + 1]))
@@ -52,12 +56,17 @@ class Decoder(nn.Module):
 
 
 class HNeRV(nn.Module):
-    def __init__(self, num_frames: int = NUM_FRAMES, widths=DEFAULT_WIDTHS):
+    def __init__(
+        self,
+        num_frames: int = NUM_FRAMES,
+        widths=DEFAULT_WIDTHS,
+        embed_c: int = EMBED_C,
+    ):
         super().__init__()
         self.embed = nn.Parameter(
-            torch.randn(num_frames, EMBED_C, EMBED_H, EMBED_W) * 0.1
+            torch.randn(num_frames, embed_c, EMBED_H, EMBED_W) * 0.1
         )
-        self.decoder = Decoder(widths)
+        self.decoder = Decoder(widths, embed_c)
 
     def forward(self, indices: torch.Tensor) -> torch.Tensor:
         return self.decoder(self.embed[indices])
@@ -71,11 +80,14 @@ class HNeRV(nn.Module):
     def param_report(self) -> dict:
         decoder = sum(p.numel() for p in self.decoder.parameters())
         embed = self.embed.numel()
+        total = (decoder + embed) * 6 // 8
         return {
             "decoder_params": decoder,
             "embed_params": embed,
             "decoder_bytes_at_6bit": decoder * 6 // 8,
             "embed_bytes_at_6bit": embed * 6 // 8,
+            "archive_floor_bytes": total,
+            "rate_term": round(25 * total / 37_545_489, 4),
         }
 
 
