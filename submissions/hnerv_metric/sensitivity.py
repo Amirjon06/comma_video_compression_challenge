@@ -48,11 +48,10 @@ def resample(x: torch.Tensor, factor: float) -> torch.Tensor:
     return back.reshape(b, t, c, h, w)
 
 
-def report(name, pose_out, pose_ref, real):
+def report(name, pose_out, pose_ref):
     got = pose_out["pose"][..., :POSE_DIMS]
     per_dim = (got - pose_ref).pow(2).mean(0)
     total = per_dim.mean().item()
-    rmse = (real - real).abs().mean().item() if real is None else None
     contribution = math.sqrt(10 * total)
     print(
         f"{name:<34} dim0 {per_dim[0].item():10.4f}   pose {total:10.5f}   "
@@ -85,32 +84,32 @@ def main() -> None:
     with torch.no_grad():
         for sigma in (0.0, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0):
             out, _ = judges.judge_outputs(net, blur(real, sigma))
-            report(f"gaussian blur sigma {sigma}", out, pose_ref, None)
+            report(f"gaussian blur sigma {sigma}", out, pose_ref)
 
         print()
         for factor in (1.5, 2.0, 3.0, 4.0):
             out, _ = judges.judge_outputs(net, resample(real, factor))
-            report(f"downsample {factor}x and back", out, pose_ref, None)
+            report(f"downsample {factor}x and back", out, pose_ref)
 
         print()
         for sigma in (2.0, 5.0, 10.0, 20.0):
             noisy = (real + sigma * torch.randn_like(real)).clamp(0, 255)
             out, _ = judges.judge_outputs(net, noisy)
-            report(f"gaussian noise {sigma} levels", out, pose_ref, None)
+            report(f"gaussian noise {sigma} levels", out, pose_ref)
 
         print()
         for step in (4, 8, 16, 32):
             quant = (real / step).round() * step
             out, _ = judges.judge_outputs(net, quant.clamp(0, 255))
-            report(f"quantize to {step} levels", out, pose_ref, None)
+            report(f"quantize to {step} levels", out, pose_ref)
 
         print()
         out, _ = judges.judge_outputs(net, real.flip(1))
-        report("frame order swapped", out, pose_ref, None)
+        report("frame order swapped", out, pose_ref)
 
         still = real[:, :1].expand(-1, 2, -1, -1, -1).contiguous()
         out, _ = judges.judge_outputs(net, still)
-        report("second frame = first frame", out, pose_ref, None)
+        report("second frame = first frame", out, pose_ref)
 
         print()
         print("our model for comparison")
@@ -123,7 +122,7 @@ def main() -> None:
             model.eval()
             recon = model.render_pairs(torch.from_numpy(pairs).to(device))
             out, _ = judges.judge_outputs(net, recon)
-            report("trained model", out, pose_ref, None)
+            report("trained model", out, pose_ref)
             err = (recon - real).pow(2).mean().item()
             print(f"model pixel MSE {err:.2f} (RMSE {math.sqrt(err):.2f} levels)")
         except Exception as exc:  # checkpoint shape mismatch is not fatal here
