@@ -12,13 +12,22 @@ Disk matters: the frame caches are about 5.5 GB.
 
 ## Setup on the box
 
-```bash
-git clone https://github.com/Amirjon06/comma_video_compression_challenge.git
-cd comma_video_compression_challenge
-git checkout hnerv-metric
+Clone comma's repo rather than the fork. The video and the two judge networks
+are Git LFS objects and GitHub does not always carry them into a fork, so
+pulling LFS from upstream is the reliable path. The branch comes from the fork
+afterwards.
 
+```bash
 apt-get update && apt-get install -y git-lfs ffmpeg
-git lfs install && git lfs pull
+git lfs install
+
+git clone https://github.com/commaai/comma_video_compression_challenge.git
+cd comma_video_compression_challenge
+git lfs pull
+
+git remote add fork https://github.com/Amirjon06/comma_video_compression_challenge.git
+git fetch fork hnerv-metric
+git checkout -b hnerv-metric fork/hnerv-metric
 
 curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
